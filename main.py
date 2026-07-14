@@ -19,7 +19,7 @@ app.add_middleware(
 
 # ── CARGAR MODELO ─────────────────────────────────────────────────────────────
 print("Cargando modelo...")
-modelo = tf.keras.models.load_model("modelo/E1_custom_cnn_best.keras")
+modelo = tf.keras.models.load_model("Modelo/E1_custom_cnn_best.keras")
 print("Modelo cargado correctamente.")
 
 CLASES = ["ALL", "AML", "CLL", "CML", "Normal"]
