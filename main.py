@@ -35,34 +35,41 @@ DESCRIPCIONES = {
 # ── ENDPOINT PRINCIPAL ────────────────────────────────────────────────────────
 @app.post("/predecir")
 async def predecir(imagen: UploadFile = File(...)):
-    # Leer imagen
     contenido = await imagen.read()
     img = Image.open(io.BytesIO(contenido)).convert("RGB")
-
-    # Preprocesar
     img = img.resize((224, 224))
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
 
-    # Predecir
     prediccion = modelo.predict(img_array, verbose=0)
     clase_idx  = int(np.argmax(prediccion))
     clase      = CLASES[clase_idx]
     confianza  = float(prediccion[0][clase_idx]) * 100
 
-    # Probabilidades por clase
     probabilidades = {
         CLASES[i]: round(float(prediccion[0][i]) * 100, 2)
         for i in range(len(CLASES))
     }
 
-    return {
-        "clase":            clase,
-        "confianza":        round(confianza, 2),
-        "descripcion":      DESCRIPCIONES[clase],
-        "probabilidades":   probabilidades
-    }
+    # ── UMBRAL DE CONFIANZA ───────────────────────────────────────────
+    UMBRAL = 70.0
+    if confianza < UMBRAL:
+        return {
+            "clase":          "Indeterminado",
+            "confianza":      round(confianza, 2),
+            "descripcion":    "La imagen no presenta características suficientemente claras para realizar una clasificación confiable. Se recomienda utilizar una imagen de microscopía con tinción de Giemsa adecuada.",
+            "probabilidades": probabilidades,
+            "advertencia":    True
+        }
+    # ─────────────────────────────────────────────────────────────────
 
+    return {
+        "clase":          clase,
+        "confianza":      round(confianza, 2),
+        "descripcion":    DESCRIPCIONES[clase],
+        "probabilidades": probabilidades,
+        "advertencia":    False
+    }
 # ── ENDPOINT DE SALUD ─────────────────────────────────────────────────────────
 @app.get("/")
 def health():
