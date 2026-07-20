@@ -64,44 +64,26 @@ class OODDetector:
     def activo(self) -> bool:
         return self.mean is not None
 
-    def es_ood(self, img_array: np.ndarray) -> bool:
-        """True si la imagen está fuera de distribución (no es célula sanguínea)."""
+    def distancia(self, img_array: np.ndarray) -> float:
+        """Distancia de Mahalanobis. A menor distancia, más típica es la imagen."""
         if not self.activo:
-            return False
+            return 0.0
         feats = self.feature_extractor.predict(img_array, verbose=0).flatten()
         delta = feats - self.mean
-        dist = float(np.sqrt(np.dot(np.dot(delta, self.inv_cov), delta)))
-        return dist > self.threshold
+        return float(np.sqrt(np.dot(np.dot(delta, self.inv_cov), delta)))
+
+    def es_ood(self, img_array: np.ndarray) -> bool:
+        return self.distancia(img_array) > self.threshold
 
 
 ood_detector = OODDetector(modelo)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# FILTRO HEURÍSTICO MEJORADO
+# FILTRO HEURÍSTICO — solo rechaza lo OBVIAMENTE no-microscópico
 # ═══════════════════════════════════════════════════════════════════════
 
-def _porcentaje_pixeles_claros(arr: np.ndarray, umbral=200) -> float:
-    """Porcentaje de píxeles con valor > umbral en los 3 canales (fondo claro)."""
-    claros = np.all(arr > umbral, axis=-1)
-    return np.mean(claros) * 100
-
-
-def _porcentaje_pixeles_oscuros(arr: np.ndarray, umbral=80) -> float:
-    """Porcentaje de píxeles con valor < umbral en los 3 canales (núcleos teñidos)."""
-    oscuros = np.all(arr < umbral, axis=-1)
-    return np.mean(oscuros) * 100
-
-
-def _razon_azul_rojo(medias) -> float:
-    """Razón entre canal azul y rojo (Giemsa tiñe núcleos de azul/púrpura)."""
-    r, g, b = medias
-    return b / max(r, 1)
-
-
 def _tiene_tono_piel(arr: np.ndarray) -> bool:
-    """Detecta si la imagen contiene predominantemente tonos de piel humana.
-    Piel: R>G>B con R en rango medio-alto, diferencia R-B moderada."""
     r = arr[:, :, 0].astype(float)
     g = arr[:, :, 1].astype(float)
     b = arr[:, :, 2].astype(float)
@@ -113,104 +95,64 @@ def _tiene_tono_piel(arr: np.ndarray) -> bool:
         ((r - b) < 100) &
         ((r - g) < 70)
     )
-    proporcion = np.mean(mascara_piel)
-    return proporcion > 0.35
+    return np.mean(mascara_piel) > 0.50
 
 
 def _tiene_verde_dominante(medias) -> bool:
-    """Detecta vegetación/escenas naturales: verde muy por encima del azul."""
     r, g, b = medias
-    return (g > b * 1.25) and (g > r * 0.9)
+    return (g > b * 1.3) and (g > r * 0.95)
 
 
-def _entropia_std_local(arr: np.ndarray, tam_bloque=16) -> float:
-    """Desviación estándar de la media local por bloques.
-    Imágenes de microscopía tienen fondo uniforme con núcleos aislados
-    → desviación local moderada. Fotografías tienen variación continua → baja/alta."""
-    h, w = arr.shape[:2]
-    medias_locales = []
-    for y in range(0, h - tam_bloque, tam_bloque):
-        for x in range(0, w - tam_bloque, tam_bloque):
-            bloque = arr[y:y+tam_bloque, x:x+tam_bloque, :]
-            medias_locales.append(np.mean(bloque))
-    return float(np.std(medias_locales))
-
-
-def es_imagen_microscopica(img: Image.Image) -> bool:
+def es_imagen_microscopica(img: Image.Image):
     """
-    Verifica que la imagen tenga características visuales compatibles
-    con microscopía óptica de células sanguíneas con tinción de Giemsa.
-
-    Devuelve False para: fotos de personas, animales, paisajes, objetos cotidianos.
+    Retorna (ok: bool, motivo: str).
+    Solo rechaza imágenes que claramente NO son microscopía:
+    fotos de personas, paisajes/vegetación, imágenes extremadamente
+    planas o saturadas.
     """
     img_rgb = img.convert("RGB")
     stat = ImageStat.Stat(img_rgb)
     medias = stat.mean
     desvios = stat.stddev
-
     r_mean, g_mean, b_mean = medias
     r_std, g_std, b_std = desvios
 
-    # ── 1. Fondo claro dominante ────────────────────────────────────
-    # Microscopía: >40% de la imagen es fondo claro (campo brillante)
-    arr = np.array(img_rgb.resize((112, 112)))
-    pct_claro = _porcentaje_pixeles_claros(arr, umbral=180)
-    if pct_claro < 25:
-        return False
+    arr = np.array(img_rgb)
 
-    # ── 2. Presencia de núcleos teñidos oscuros ──────────────────────
-    # Debe haber al menos algunos píxeles oscuros (núcleos celulares)
-    pct_oscuro = _porcentaje_pixeles_oscuros(arr, umbral=70)
-    if pct_oscuro < 0.5:
-        return False
-
-    # ── 3. Balance azul/rojo compatible con tinción ──────────────────
-    # Giemsa: núcleos púrpura-azulados (B elevado), citoplasma rosa (R moderado)
-    razon_b_r = _razon_azul_rojo(medias)
-    if razon_b_r < 0.65:
-        return False
-
-    # ── 4. Rechazo de tonos de piel ──────────────────────────────────
-    if _tiene_tono_piel(arr):
-        return False
-
-    # ── 5. Rechazo de vegetación / paisajes ──────────────────────────
-    if _tiene_verde_dominante(medias):
-        return False
-
-    # ── 6. Variación cromática suficiente ────────────────────────────
+    # ── 1. Imagen totalmente plana (folder vacío, ruido uniforme) ───
     variacion_total = r_std + g_std + b_std
-    if variacion_total < 20:
-        return False
+    if variacion_total < 15:
+        return False, "imagen sin variación cromática suficiente"
 
-    # ── 7. Saturación extrema (fotos muy coloridas) ──────────────────
-    if r_mean > 190 and g_mean > 170 and b_mean > 150:
-        return False
+    # ── 2. Foto de persona (tonos de piel dominantes) ────────────────
+    if _tiene_tono_piel(arr):
+        return False, "posible fotografía de persona (tonos de piel dominantes)"
 
-    return True
+    # ── 3. Paisaje / naturaleza (verde dominante) ────────────────────
+    if _tiene_verde_dominante(medias):
+        return False, "posible paisaje o vegetación (canal verde dominante)"
+
+    # ── 4. Imagen extremadamente brillante y colorida (publicidad, IA) ─
+    if r_mean > 200 and g_mean > 185 and b_mean > 170:
+        return False, "imagen excesivamente brillante/saturada"
+
+    return True, ""
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════
 
-RESPUESTA_RECHAZO = {
-    "clase": "Indeterminado",
-    "confianza": 0.0,
-    "descripcion": (
-        "La imagen no corresponde a una muestra de microscopía de células "
-        "sanguíneas. Utilice imágenes obtenidas mediante microscopía óptica "
-        "con tinción de Giemsa."
-    ),
-    "probabilidades": {c: 0.0 for c in CLASES},
-    "advertencia": True
-}
-
-RESPUESTA_BAJA_CONFIANZA_TEMPLATE = (
-    "La imagen no presenta características suficientemente claras para una "
-    "clasificación confiable. Se recomienda utilizar una imagen de microscopía "
-    "con tinción de Giemsa adecuada."
-)
+def _rechazo(motivo: str, distancia: float = 0.0) -> dict:
+    return {
+        "clase": "Indeterminado",
+        "confianza": 0.0,
+        "descripcion": f"La imagen no corresponde a una muestra de microscopía de células sanguíneas. Motivo: {motivo}.",
+        "probabilidades": {c: 0.0 for c in CLASES},
+        "advertencia": True,
+        "motivo": motivo,
+        "distancia_ood": round(distancia, 2),
+    }
 
 
 @app.post("/predecir")
@@ -218,18 +160,24 @@ async def predecir(imagen: UploadFile = File(...)):
     contenido = await imagen.read()
     img = Image.open(io.BytesIO(contenido)).convert("RGB")
 
-    # ── FILTRO 1: heurísticas visuales ──────────────────────────────
-    if not es_imagen_microscopica(img):
-        return RESPUESTA_RECHAZO
+    # ── FILTRO 1: heurísticas visuales básicas ───────────────────────
+    ok, motivo_heur = es_imagen_microscopica(img)
+    if not ok:
+        return _rechazo(motivo_heur)
 
     # ── Preprocesamiento ────────────────────────────────────────────
     img_redim = img.resize((224, 224))
     img_array = np.array(img_redim) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
 
-    # ── FILTRO 2: distancia de Mahalanobis sobre features del modelo ─
+    # ── FILTRO 2: distancia de Mahalanobis ──────────────────────────
+    dist = ood_detector.distancia(img_array)
     if ood_detector.activo and ood_detector.es_ood(img_array):
-        return RESPUESTA_RECHAZO
+        return _rechazo(
+            f"la imagen no coincide con la distribución de células sanguíneas "
+            f"(distancia Mahalanobis {dist:.1f}, umbral {ood_detector.threshold:.1f})",
+            distancia=dist
+        )
 
     # ── Predicción ──────────────────────────────────────────────────
     prediccion = modelo.predict(img_array, verbose=0)
@@ -243,14 +191,20 @@ async def predecir(imagen: UploadFile = File(...)):
     }
 
     # ── FILTRO 3: umbral de confianza ───────────────────────────────
-    UMBRAL = 85.0
+    UMBRAL = 70.0
     if confianza < UMBRAL:
         return {
             "clase": "Indeterminado",
             "confianza": round(confianza, 2),
-            "descripcion": RESPUESTA_BAJA_CONFIANZA_TEMPLATE,
+            "descripcion": (
+                "La imagen no presenta características suficientemente claras "
+                "para una clasificación confiable. Se recomienda utilizar una "
+                "imagen de microscopía con tinción de Giemsa adecuada."
+            ),
             "probabilidades": probabilidades,
-            "advertencia": True
+            "advertencia": True,
+            "motivo": f"confianza {confianza:.1f}% por debajo del umbral {UMBRAL}%",
+            "distancia_ood": round(dist, 2),
         }
 
     return {
@@ -258,7 +212,8 @@ async def predecir(imagen: UploadFile = File(...)):
         "confianza": round(confianza, 2),
         "descripcion": DESCRIPCIONES[clase],
         "probabilidades": probabilidades,
-        "advertencia": False
+        "advertencia": False,
+        "distancia_ood": round(dist, 2),
     }
 
 

@@ -117,17 +117,28 @@ def main():
     inv_cov = np.linalg.inv(cov)
 
     distances = np.array([mahalanobis_distance(f, mean, inv_cov) for f in features])
+
+    d_min = np.min(distances)
+    d_max = np.max(distances)
+    d_media = np.mean(distances)
+    d_mediana = np.median(distances)
+    p90 = np.percentile(distances, 90)
     p95 = np.percentile(distances, 95)
-    threshold = p95 * 2.0
+    p99 = np.percentile(distances, 99)
 
-    print(f"\nEstadísticas:")
-    print(f"  Distancia media:          {np.mean(distances):.2f}")
-    print(f"  Distancia mediana:        {np.median(distances):.2f}")
-    print(f"  Percentil 95:             {p95:.2f}")
-    print(f"  Umbral OOD (p95 × 2):     {threshold:.2f}")
+    # Umbral: la máxima distancia del conjunto de entrenamiento + 15% de margen.
+    # Esto garantiza que NINGUNA imagen de células sanguíneas sea rechazada.
+    threshold = d_max * 1.15
 
-    umbral_entropia_recomendado = np.percentile(distances, 99) * 1.5
-    print(f"  Umbral alternativo (p99): {umbral_entropia_recomendado:.2f}")
+    print(f"\nEstadísticas de distancia Mahalanobis sobre {len(distances)} imágenes:")
+    print(f"  Mínima:            {d_min:.2f}")
+    print(f"  Media:             {d_media:.2f}")
+    print(f"  Mediana:           {d_mediana:.2f}")
+    print(f"  Percentil 90:      {p90:.2f}")
+    print(f"  Percentil 95:      {p95:.2f}")
+    print(f"  Percentil 99:      {p99:.2f}")
+    print(f"  Máxima:            {d_max:.2f}")
+    print(f"  Umbral OOD (max × 1.15): {threshold:.2f}")
 
     os.makedirs(os.path.dirname(args.salida) or ".", exist_ok=True)
     np.savez(args.salida, mean=mean, inv_cov=inv_cov, threshold=threshold)
