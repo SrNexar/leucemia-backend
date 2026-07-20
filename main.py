@@ -57,8 +57,11 @@ class OODDetector:
         data = np.load(path)
         self.mean = data["mean"]
         self.inv_cov = data["inv_cov"]
-        self.threshold = float(data["threshold"])
-        print(f"  ✓ Detector OOD cargado ({len(self.mean)} dims, umbral={self.threshold:.2f})")
+        self.threshold_raw = float(data["threshold"])
+        factor = float(os.environ.get("OOD_MULTIPLIER", 3))
+        self.threshold = self.threshold_raw * factor
+        print(f"  ✓ Detector OOD cargado ({len(self.mean)} dims)")
+        print(f"    Umbral base: {self.threshold_raw:.2f} × {factor} = {self.threshold:.2f}")
 
     @property
     def activo(self) -> bool:
@@ -158,7 +161,14 @@ def _rechazo(motivo: str, distancia: float = 0.0) -> dict:
 @app.post("/predecir")
 async def predecir(imagen: UploadFile = File(...)):
     contenido = await imagen.read()
-    img = Image.open(io.BytesIO(contenido)).convert("RGB")
+
+    if not contenido:
+        return _rechazo("archivo vacío")
+
+    try:
+        img = Image.open(io.BytesIO(contenido)).convert("RGB")
+    except Exception:
+        return _rechazo("el archivo no es una imagen válida (formatos aceptados: PNG, JPG, BMP, TIFF)")
 
     # ── FILTRO 1: heurísticas visuales básicas ───────────────────────
     ok, motivo_heur = es_imagen_microscopica(img)
