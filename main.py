@@ -58,7 +58,7 @@ class OODDetector:
         self.mean = data["mean"]
         self.inv_cov = data["inv_cov"]
         self.threshold_raw = float(data["threshold"])
-        factor = float(os.environ.get("OOD_MULTIPLIER", 1.8))
+        factor = float(os.environ.get("OOD_MULTIPLIER", 1.5))
         self.threshold = self.threshold_raw * factor
         print(f"  ✓ Detector OOD cargado ({len(self.mean)} dims)")
         print(f"    Umbral base: {self.threshold_raw:.2f} × {factor} = {self.threshold:.2f}")
