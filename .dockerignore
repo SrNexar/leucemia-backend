@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+.venv
+.codegraph
+.cursor
+*.db
+*.db-shm
+*.db-wal
+render.yaml
+.git
+.gitignore
+index.html
