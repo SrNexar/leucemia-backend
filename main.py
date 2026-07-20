@@ -41,7 +41,7 @@ class OODDetector:
 
     def __init__(self, model, stats_path="Modelo/ood_stats.npz"):
         self.feature_extractor = tf.keras.Model(
-            inputs=model.input,
+            inputs=model.inputs,
             outputs=model.layers[-2].output
         )
         self.mean = None

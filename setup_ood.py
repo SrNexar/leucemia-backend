@@ -19,7 +19,7 @@ from PIL import Image
 def build_feature_extractor(model):
     """Extrae features de la capa anterior a la salida softmax."""
     penultimate = model.layers[-2]
-    return tf.keras.Model(inputs=model.input, outputs=penultimate.output)
+    return tf.keras.Model(inputs=model.inputs, outputs=penultimate.output)
 
 
 def extract_features(img_array, feature_extractor):
